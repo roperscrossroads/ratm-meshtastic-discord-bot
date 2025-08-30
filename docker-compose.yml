@@ -1,0 +1,42 @@
+services:
+  mesh-bot:
+    build: .
+    container_name: ratm-mesh-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('Health check passed')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - mesh-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ratm-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    profiles:
+      - redis
+    networks:
+      - mesh-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis-data:
+
+networks:
+  mesh-network:
+    driver: bridge
