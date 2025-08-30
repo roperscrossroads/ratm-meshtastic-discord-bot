@@ -17,6 +17,7 @@
     "@types/node": "^18.0.6",
     "axios": "^1.7.2",
     "caprover": "^2.3.0",
+    "dotenv": "^17.2.1",
     "mqtt": "^5.7.2",
     "postgres": "^3.4.4",
     "protobufjs": "^7.3.2",
