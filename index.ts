@@ -69,8 +69,6 @@ if (process.env.RBL_JSON_URL) {
   });
 }
 
-const mqttBrokerUrl = "mqtt://mqtt.meshtastic.org"; // the original project took a nose dive, so this server is trash
-const basymeshMqttBrokerUrl = "mqtt://mqtt.bayme.sh";
 const mqttUsername = "meshdev";
 const mqttPassword = "large4cats";
 
@@ -83,7 +81,7 @@ const redisClient = createClient({
     // Connect to redis server
     await redisClient.connect();
     logger.info(`Setting active instance id to ${INSTANCE_ID}`);
-    redisClient.set(`baymesh:active`, INSTANCE_ID);
+    redisClient.set(`ratm:active`, INSTANCE_ID);
   }
 })();
 
@@ -104,7 +102,7 @@ const updateNodeDB = (
   try {
     nodeDB[node] = longName;
     if (process.env.REDIS_ENABLED === "true") {
-      redisClient.set(`baymesh:node:${node}`, longName);
+      redisClient.set(`ratm:node:${node}`, longName);
       const nodeInfoGenericObj = JSON.parse(JSON.stringify(nodeInfo));
       // remove leading "!" from id
       nodeInfoGenericObj.id = nodeInfoGenericObj.id.replace("!", "");
@@ -112,10 +110,10 @@ const updateNodeDB = (
       nodeInfoGenericObj.hopStart = hopStart;
       nodeInfoGenericObj.updatedAt = new Date().getTime();
       redisClient.json
-        .set(`baymesh:nodeinfo:${node}`, "$", nodeInfoGenericObj)
+        .set(`ratm:nodeinfo:${node}`, "$", nodeInfoGenericObj)
         .then(() => {
           // redisClient.json
-          //   .get(`baymesh:nodeinfo:${node}`) // , { path: "$.hwModel" }
+          //   .get(`ratm:nodeinfo:${node}`) // , { path: "$.hwModel" }
           //   .then((data) => {
           //     if (data) {
           //       logger.info(JSON.stringify(data));
@@ -125,12 +123,12 @@ const updateNodeDB = (
         .catch((err) => {
           // console.log(nodeInfoGenericObj);
           // if (err === "Error: Existing key has wrong Redis type") {
-          redisClient.type(`baymesh:nodeinfo:${node}`).then((result) => {
+          redisClient.type(`ratm:nodeinfo:${node}`).then((result) => {
             logger.info(result);
             if (result === "string") {
-              redisClient.del(`baymesh:nodeinfo:${node}`).then(() => {
+              redisClient.del(`ratm:nodeinfo:${node}`).then(() => {
                 redisClient.json
-                  .set(`baymesh:nodeinfo:${node}`, "$", nodeInfoGenericObj)
+                  .set(`ratm:nodeinfo:${node}`, "$", nodeInfoGenericObj)
                   .then(() => {
                     logger.info("deleted and re-added node info for: " + node);
                   })
@@ -141,7 +139,7 @@ const updateNodeDB = (
             }
           });
           // }
-          logger.error(`redis key: baymesh:nodeinfo:${node} ${err}`);
+          logger.error(`redis key: ratm:nodeinfo:${node} ${err}`);
         });
     }
     fs.writeFileSync(
@@ -163,7 +161,7 @@ const getNodeInfos = async (nodeIds: string[], debug: boolean) => {
     // const foo = nodeIds.slice(0, nodeIds.length - 1);
     nodeIds = Array.from(new Set(nodeIds));
     const nodeInfos = await redisClient.json.mGet(
-      nodeIds.map((nodeId) => `baymesh:nodeinfo:${nodeId2hex(nodeId)}`),
+      nodeIds.map((nodeId) => `ratm:nodeinfo:${nodeId2hex(nodeId)}`),
       "$",
     );
     if (debug) {
@@ -247,11 +245,14 @@ if (!process.env.DISCORD_WEBHOOK_URL) {
   process.exit(-1);
 }
 
-const baWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
-const baMsWebhookUrl = process.env.DISCORD_MS_WEBOOK_URL;
-const svWebhookUrl = process.env.SV_DISCORD_WEBHOOK_URL;
+if (!process.env.MQTT_TOPIC) {
+  logger.error("MQTT_TOPIC not set");
+  process.exit(-1);
+}
 
-const mesh_topic = process.env.MQTT_TOPIC || "msh/US/bayarea";
+const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+const mesh_topic = process.env.MQTT_TOPIC;
+const mqttBrokerUrl = process.env.MQTT_BROKER_URL || "mqtt://mqtt.bayme.sh";
 const grouping_duration = parseInt(process.env.GROUPING_DURATION || "10000");
 
 function sendDiscordMessage(webhookUrl: string, payload: any) {
@@ -313,13 +314,14 @@ const createDiscordMessage = async (packetGroup, text) => {
       return;
     }
 
+    // Check if message is from the configured topic
     if (
       packetGroup.serviceEnvelopes.filter((envelope) =>
-        home_topics.some((home_topic) => envelope.topic.startsWith(home_topic)),
+        envelope.topic.startsWith(mesh_topic),
       ).length === 0
     ) {
       logger.info(
-        `MessageId: ${packetGroup.id} No packets found in topic: ${packetGroup.serviceEnvelopes.map((envelope) => envelope.topic)}`,
+        `MessageId: ${packetGroup.id} No packets found for configured topic ${mesh_topic}: ${packetGroup.serviceEnvelopes.map((envelope) => envelope.topic)}`,
       );
       return;
     }
@@ -450,34 +452,8 @@ const createDiscordMessage = async (packetGroup, text) => {
       `MessageId: ${packetGroup.id} Received message from ${prettyNodeName(from)} to ${prettyNodeName(to)} : ${text}`,
     );
 
-    if (
-      packetGroup.serviceEnvelopes.filter((envelope) =>
-        ba_home_topics.some((home_topic) =>
-          envelope.topic.startsWith(home_topic),
-        ),
-      ).length > 0
-    ) {
-      if (
-        baMsWebhookUrl &&
-        packetGroup.serviceEnvelopes[0].channelId === "MediumSlow"
-      ) {
-        sendDiscordMessage(baMsWebhookUrl, content);
-      } else {
-        sendDiscordMessage(baWebhookUrl, content);
-      }
-    }
-
-    if (
-      packetGroup.serviceEnvelopes.filter((envelope) =>
-        sv_home_topics.some((home_topic) =>
-          envelope.topic.startsWith(home_topic),
-        ),
-      ).length > 0
-    ) {
-      if (svWebhookUrl) {
-        sendDiscordMessage(svWebhookUrl, content);
-      }
-    }
+    // Send to the configured Discord webhook
+    sendDiscordMessage(webhookUrl, content);
   } catch (err) {
     logger.error("Error: " + String(err));
     Sentry.captureException(err);
@@ -489,47 +465,30 @@ const createDiscordMessage = async (packetGroup, text) => {
 //   password: mqttPassword,
 // });
 
-const baymesh_client = mqtt.connect(basymeshMqttBrokerUrl, {
+const mqtt_client = mqtt.connect(mqttBrokerUrl, {
   username: mqttUsername,
   password: mqttPassword,
 });
 
-const ba_home_topics = [
-  "msh/US/bayarea",
-  "msh/US/BayArea",
-  "msh/US/CA/bayarea",
-  "msh/US/CA/BayArea",
-];
-
-const sv_home_topics = [
-  "msh/US/sacvalley",
-  "msh/US/SacValley",
-  "msh/US/CA/sacvalley",
-  "msh/US/CA/SacValley",
-];
-
-// home_topics is both ba and sv
-const home_topics = ba_home_topics.concat(sv_home_topics);
+// Extract the base topic for subscription (e.g., "msh/US" from "msh/US/bayarea")
+const subbed_topics = [mesh_topic.split("/").slice(0, 2).join("/")];
 
 const nodes_to_log_all_positions = [
-  "fa6dc348", // me
-  "3b46b95c", // ohr
-  "33686ed8", // balloon
+  // Add any specific node IDs that should always be logged
+  // These can be made configurable via environment variables if needed
 ];
-
-const subbed_topics = ["msh/US"];
 
 // run every 5 seconds and pop off from the queue
 const processing_timer = setInterval(() => {
   if (process.env.REDIS_ENABLED === "true") {
-    redisClient.get(`baymesh:active`).then((active_instance) => {
+    redisClient.get(`ratm:active`).then((active_instance) => {
       if (active_instance && active_instance !== INSTANCE_ID) {
         logger.error(
           `Stopping RATM instance; active_instance: ${active_instance} this instance: ${INSTANCE_ID}`,
         );
         clearInterval(processing_timer); // do we want to kill it so fast? what about things in the queue?
         // subbed_topics.forEach((topic) => client.unsubscribe(topic));
-        subbed_topics.forEach((topic) => baymesh_client.unsubscribe(topic));
+        subbed_topics.forEach((topic) => mqtt_client.unsubscribe(topic));
       }
     });
   }
@@ -552,13 +511,13 @@ function sub(the_client: mqtt.MqttClient, topic: string) {
 }
 
 // subscribe to everything when connected
-baymesh_client.on("connect", () => {
-  logger.info(`Connected to Private MQTT broker`);
-  subbed_topics.forEach((topic) => sub(baymesh_client, topic));
+mqtt_client.on("connect", () => {
+  logger.info(`Connected to MQTT broker: ${mqttBrokerUrl}`);
+  subbed_topics.forEach((topic) => sub(mqtt_client, topic));
 });
 
 // handle message received
-baymesh_client.on("message", async (topic: string, message: any) => {
+mqtt_client.on("message", async (topic: string, message: any) => {
   try {
     if (topic.includes("msh")) {
       if (!topic.includes("/json")) {
@@ -585,7 +544,7 @@ baymesh_client.on("message", async (topic: string, message: any) => {
         }
 
         if (
-          home_topics.some((home_topic) => topic.startsWith(home_topic)) ||
+          topic.startsWith(mesh_topic) ||
           nodes_to_log_all_positions.includes(
             nodeId2hex(envelope.packet.from),
           ) ||
@@ -618,7 +577,7 @@ baymesh_client.on("message", async (topic: string, message: any) => {
           //console.log(JSON.stringify(nodeDB));
         }
 
-        meshPacketQueue.add(envelope, topic, "baymesh");
+        meshPacketQueue.add(envelope, topic, "mqtt");
       }
     }
   } catch (err) {

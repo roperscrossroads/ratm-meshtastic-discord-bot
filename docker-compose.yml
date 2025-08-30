@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  ratm-bot:
+    build: .
+    container_name: ratm-meshtastic-bot
+    restart: unless-stopped
+    environment:
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - MQTT_TOPIC=${MQTT_TOPIC}
+      - MQTT_BROKER_URL=${MQTT_BROKER_URL:-mqtt://mqtt.bayme.sh}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - GROUPING_DURATION=${GROUPING_DURATION:-10000}
+      - REDIS_ENABLED=${REDIS_ENABLED:-false}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - PFP_JSON_URL=${PFP_JSON_URL}
+      - RBL_JSON_URL=${RBL_JSON_URL}
+      - SENTRY_DSN=${SENTRY_DSN}
+    depends_on:
+      - redis
+    networks:
+      - ratm-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ratm-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - ratm-network
+    # Uncomment the following lines if you want to expose Redis port
+    # ports:
+    #   - "6379:6379"
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  ratm-network:
+    driver: bridge
