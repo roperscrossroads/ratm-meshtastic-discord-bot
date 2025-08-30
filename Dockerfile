@@ -9,8 +9,12 @@ RUN npm install
 # Copy application code
 COPY . .
 
-# Clone protobufs if they don't exist (required by the application)
-RUN if [ ! -d "src/protobufs" ]; then git clone https://github.com/meshtastic/protobufs.git src/protobufs; fi
+# Initialize protobufs submodule or clone if needed (required by the application)
+RUN if [ ! -f "src/protobufs/meshtastic/mqtt.proto" ]; then \
+    rm -rf src/protobufs && \
+    git config --global http.sslverify false && \
+    git clone https://github.com/meshtastic/protobufs.git src/protobufs; \
+fi
 
 # Create data directory
 RUN mkdir -p /app/data
