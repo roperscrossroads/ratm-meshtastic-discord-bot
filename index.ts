@@ -12,6 +12,10 @@ import * as Sentry from "@sentry/node";
 import { nodeProfilingIntegration } from "@sentry/profiling-node";
 import { createClient } from "redis";
 import { env } from "process";
+import dotenv from "dotenv";
+
+// Load environment variables from .env file
+dotenv.config();
 
 // generate a pseduo uuid kinda thing to use as an instance id
 const INSTANCE_ID = (() => {
@@ -69,10 +73,26 @@ if (process.env.RBL_JSON_URL) {
   });
 }
 
-const mqttBrokerUrl = "mqtt://mqtt.meshtastic.org"; // the original project took a nose dive, so this server is trash
-const basymeshMqttBrokerUrl = "mqtt://mqtt.bayme.sh";
-const mqttUsername = "meshdev";
-const mqttPassword = "large4cats";
+// MQTT configuration from environment variables
+const mqttBrokerUrl = process.env.MQTT_BROKER_URL;
+const mqttUsername = process.env.MQTT_USERNAME;
+const mqttPassword = process.env.MQTT_PASSWORD;
+
+// Validate required MQTT configuration
+if (!mqttBrokerUrl) {
+  logger.error("MQTT_BROKER_URL not set");
+  process.exit(-1);
+}
+
+if (!mqttUsername) {
+  logger.error("MQTT_USERNAME not set");
+  process.exit(-1);
+}
+
+if (!mqttPassword) {
+  logger.error("MQTT_PASSWORD not set");
+  process.exit(-1);
+}
 
 const redisClient = createClient({
   url: process.env.REDIS_URL,
@@ -247,11 +267,8 @@ if (!process.env.DISCORD_WEBHOOK_URL) {
   process.exit(-1);
 }
 
-const baWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
-const baMsWebhookUrl = process.env.DISCORD_MS_WEBOOK_URL;
-const svWebhookUrl = process.env.SV_DISCORD_WEBHOOK_URL;
+const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
 
-const mesh_topic = process.env.MQTT_TOPIC || "msh/US/bayarea";
 const grouping_duration = parseInt(process.env.GROUPING_DURATION || "10000");
 
 function sendDiscordMessage(webhookUrl: string, payload: any) {
@@ -315,7 +332,7 @@ const createDiscordMessage = async (packetGroup, text) => {
 
     if (
       packetGroup.serviceEnvelopes.filter((envelope) =>
-        home_topics.some((home_topic) => envelope.topic.startsWith(home_topic)),
+        envelope.topic.startsWith(mqttTopic)
       ).length === 0
     ) {
       logger.info(
@@ -450,74 +467,47 @@ const createDiscordMessage = async (packetGroup, text) => {
       `MessageId: ${packetGroup.id} Received message from ${prettyNodeName(from)} to ${prettyNodeName(to)} : ${text}`,
     );
 
-    if (
-      packetGroup.serviceEnvelopes.filter((envelope) =>
-        ba_home_topics.some((home_topic) =>
-          envelope.topic.startsWith(home_topic),
-        ),
-      ).length > 0
-    ) {
-      if (
-        baMsWebhookUrl &&
-        packetGroup.serviceEnvelopes[0].channelId === "MediumSlow"
-      ) {
-        sendDiscordMessage(baMsWebhookUrl, content);
-      } else {
-        sendDiscordMessage(baWebhookUrl, content);
-      }
-    }
-
-    if (
-      packetGroup.serviceEnvelopes.filter((envelope) =>
-        sv_home_topics.some((home_topic) =>
-          envelope.topic.startsWith(home_topic),
-        ),
-      ).length > 0
-    ) {
-      if (svWebhookUrl) {
-        sendDiscordMessage(svWebhookUrl, content);
-      }
-    }
+    // Send message to configured Discord webhook
+    sendDiscordMessage(webhookUrl, content);
   } catch (err) {
     logger.error("Error: " + String(err));
     Sentry.captureException(err);
   }
 };
 
-// const client = mqtt.connect(mqttBrokerUrl, {
-//   username: mqttUsername,
-//   password: mqttPassword,
-// });
-
-const baymesh_client = mqtt.connect(basymeshMqttBrokerUrl, {
+// Single MQTT client connection using configured broker
+const mqttClient = mqtt.connect(mqttBrokerUrl, {
   username: mqttUsername,
   password: mqttPassword,
 });
 
-const ba_home_topics = [
-  "msh/US/bayarea",
-  "msh/US/BayArea",
-  "msh/US/CA/bayarea",
-  "msh/US/CA/BayArea",
-];
+// Add MQTT client event handlers
+mqttClient.on("error", (error) => {
+  logger.error(`MQTT connection error: ${error.message}`);
+});
 
-const sv_home_topics = [
-  "msh/US/sacvalley",
-  "msh/US/SacValley",
-  "msh/US/CA/sacvalley",
-  "msh/US/CA/SacValley",
-];
+mqttClient.on("offline", () => {
+  logger.info("MQTT client went offline");
+});
 
-// home_topics is both ba and sv
-const home_topics = ba_home_topics.concat(sv_home_topics);
+mqttClient.on("reconnect", () => {
+  logger.info("MQTT client reconnecting");
+});
+
+// Single configurable topic from environment
+const mqttTopic = process.env.MQTT_TOPIC;
+
+// Validate required MQTT topic
+if (!mqttTopic) {
+  logger.error("MQTT_TOPIC not set");
+  process.exit(-1);
+}
 
 const nodes_to_log_all_positions = [
   "fa6dc348", // me
   "3b46b95c", // ohr
   "33686ed8", // balloon
 ];
-
-const subbed_topics = ["msh/US"];
 
 // run every 5 seconds and pop off from the queue
 const processing_timer = setInterval(() => {
@@ -528,8 +518,7 @@ const processing_timer = setInterval(() => {
           `Stopping RATM instance; active_instance: ${active_instance} this instance: ${INSTANCE_ID}`,
         );
         clearInterval(processing_timer); // do we want to kill it so fast? what about things in the queue?
-        // subbed_topics.forEach((topic) => client.unsubscribe(topic));
-        subbed_topics.forEach((topic) => baymesh_client.unsubscribe(topic));
+        mqttClient.unsubscribe(mqttTopic);
       }
     });
   }
@@ -552,13 +541,13 @@ function sub(the_client: mqtt.MqttClient, topic: string) {
 }
 
 // subscribe to everything when connected
-baymesh_client.on("connect", () => {
-  logger.info(`Connected to Private MQTT broker`);
-  subbed_topics.forEach((topic) => sub(baymesh_client, topic));
+mqttClient.on("connect", () => {
+  logger.info(`Connected to MQTT broker: ${mqttBrokerUrl}`);
+  sub(mqttClient, mqttTopic);
 });
 
 // handle message received
-baymesh_client.on("message", async (topic: string, message: any) => {
+mqttClient.on("message", async (topic: string, message: any) => {
   try {
     if (topic.includes("msh")) {
       if (!topic.includes("/json")) {
@@ -585,13 +574,13 @@ baymesh_client.on("message", async (topic: string, message: any) => {
         }
 
         if (
-          home_topics.some((home_topic) => topic.startsWith(home_topic)) ||
+          topic.startsWith(mqttTopic) ||
           nodes_to_log_all_positions.includes(
             nodeId2hex(envelope.packet.from),
           ) ||
           meshPacketQueue.exists(envelope.packet.id)
         ) {
-          // return;
+          // Process this message
         } else {
           // logger.info("Message received on topic: " + topic);
           return;
@@ -618,7 +607,7 @@ baymesh_client.on("message", async (topic: string, message: any) => {
           //console.log(JSON.stringify(nodeDB));
         }
 
-        meshPacketQueue.add(envelope, topic, "baymesh");
+        meshPacketQueue.add(envelope, topic, "mqtt");
       }
     }
   } catch (err) {
