@@ -78,6 +78,9 @@ const mqttBrokerUrl = process.env.MQTT_BROKER_URL;
 const mqttUsername = process.env.MQTT_USERNAME;
 const mqttPassword = process.env.MQTT_PASSWORD;
 
+// Optional Meshinfo-lite configuration
+const meshinfoLiteUrl = process.env.MESHINFO_LITE_URL;
+
 // Validate required MQTT configuration
 if (!mqttBrokerUrl) {
   logger.error("MQTT_BROKER_URL not set");
@@ -353,115 +356,48 @@ const createDiscordMessage = async (packetGroup, text) => {
       avatarUrl = pfpDb[nodeIdHex];
     }
 
-    const maxHopStart = packetGroup.serviceEnvelopes.reduce((acc, se) => {
-      const hopStart = se.packet.hopStart;
-      return hopStart > acc ? hopStart : acc;
-    }, 0);
+    // Get node name and create title with optional Meshinfo-lite link
+    const nodeName = nodeInfos[nodeIdHex] ? nodeInfos[nodeIdHex].longName : "Unknown";
+    const shortName = nodeInfos[nodeIdHex] ? nodeInfos[nodeIdHex].shortName : "UNK";
+    
+    // Create title with node link if Meshinfo-lite URL is configured
+    let title = shortName;
+    let authorUrl = `https://meshview.rouvier.org/packet_list/${packet.from}`;
+    
+    if (meshinfoLiteUrl) {
+      // Ensure URL ends with / for proper concatenation
+      const baseUrl = meshinfoLiteUrl.endsWith('/') ? meshinfoLiteUrl : meshinfoLiteUrl + '/';
+      const nodeUrl = `${baseUrl}node_${nodeIdHex}.html`;
+      title = `[${shortName}](${nodeUrl})`;
+      authorUrl = nodeUrl;
+    }
 
-    // console.log("maxHopStart", maxHopStart);
-
+    // Simplified Discord message format
     const content = {
       username: "Mesh Bot",
       avatar_url:
         "https://cdn.discordapp.com/app-icons/1240017058046152845/295e77bec5f9a44f7311cf8723e9c332.png",
       embeds: [
         {
-          url: `https://meshview.rouvier.org/packet_list/${packet.from}`,
           color: 6810260,
           timestamp: new Date(packet.rxTime * 1000).toISOString(),
-
           author: {
-            name: `${nodeInfos[nodeIdHex] ? nodeInfos[nodeIdHex].longName : "Unknown"}`,
-            url: `https://meshview.rouvier.org/packet_list/${packet.from}`,
+            name: nodeName,
+            url: authorUrl,
             icon_url: avatarUrl,
           },
-          title: `${nodeInfos[nodeIdHex] ? nodeInfos[nodeIdHex].shortName : "UNK"}`,
+          title: title,
           description: text,
           fields: [
-            // {
-            //   name: `${nodeInfos[nodeIdHex] ? nodeInfos[nodeIdHex].shortName : "UNK"}`,
-            //   value: text,
-            // },
-            // {
-            //   name: "Node ID",
-            //   value: `${nodeIdHex}`,
-            //   inline: true,
-            // },
             {
-              name: "Packet",
-              value: `[${packetGroup.id.toString(16)}](https://meshview.rouvier.org/packet/${packetGroup.id})`,
+              name: "Node ID",
+              value: nodeIdHex,
               inline: true,
             },
-            {
-              name: "Channel",
-              value: `${packetGroup.serviceEnvelopes[0].channelId}`,
-              inline: true,
-            },
-            ...packetGroup.serviceEnvelopes
-              .filter(
-                (value, index, self) =>
-                  self.findIndex((t) => t.gatewayId === value.gatewayId) ===
-                  index,
-              )
-              .map((envelope) => {
-                const gatewayDelay =
-                  envelope.mqttTime.getTime() - packetGroup.time.getTime();
-
-                if (
-                  envelope.gatewayId === "!75f1804c" ||
-                  envelope.gatewayId === "!3b46b95c"
-                ) {
-                  // console.log(envelope);
-                }
-
-                let gatewayDisplaName = envelope.gatewayId.replace("!", "");
-                if (nodeInfos[envelope.gatewayId.replace("!", "")]) {
-                  gatewayDisplaName =
-                    // nodeInfos[envelope.gatewayId.replace("!", "")].shortName +
-                    // " - " +
-                    nodeInfos[envelope.gatewayId.replace("!", "")].shortName; //+
-                  // " " +
-                  // envelope.gatewayId.replace("!", "");
-                }
-
-                let hopText = `${envelope.packet.hopStart - envelope.packet.hopLimit}/${envelope.packet.hopStart} hops`;
-
-                if (
-                  envelope.packet.hopStart === 0 &&
-                  envelope.packet.hopLimit === 0
-                ) {
-                  hopText = `${envelope.packet.rxSnr} / ${envelope.packet.rxRssi} dBm`;
-                } else if (
-                  envelope.packet.hopStart - envelope.packet.hopLimit ===
-                  0
-                ) {
-                  hopText = `${envelope.packet.rxSnr} / ${envelope.packet.rxRssi} dBm ${envelope.packet.hopStart - envelope.packet.hopLimit}/${envelope.packet.hopStart} hops`;
-                }
-
-                if (envelope.gatewayId.replace("!", "") === nodeIdHex) {
-                  hopText = `Self Gated ${envelope.packet.hopStart} hopper`;
-                }
-
-                if (maxHopStart !== envelope.packet.hopStart) {
-                  hopText = `:older_man: ${envelope.packet.hopStart - envelope.packet.hopLimit}/${envelope.packet.hopStart} hops`;
-                }
-
-                if (envelope.mqttServer === "public") {
-                  hopText = `:poop: ${envelope.packet.hopStart - envelope.packet.hopLimit}/${envelope.packet.hopStart} hops`;
-                }
-
-                return {
-                  name: `Gateway`,
-                  value: `[${gatewayDisplaName} (${hopText})](https://meshview.rouvier.org/packet_list/${nodeHex2id(envelope.gatewayId.replace("!", ""))})${gatewayDelay > 0 ? " (" + gatewayDelay + "ms)" : ""}`,
-                  inline: true,
-                };
-              }),
           ],
         },
       ],
     };
-
-    //console.log(packetGroup, packetGroup.serviceEnvelopes);
 
     logger.info(
       `MessageId: ${packetGroup.id} Received message from ${prettyNodeName(from)} to ${prettyNodeName(to)} : ${text}`,
