@@ -356,45 +356,32 @@ const createDiscordMessage = async (packetGroup, text) => {
       avatarUrl = pfpDb[nodeIdHex];
     }
 
-    // Get node name and create title with optional Meshinfo-lite link
+    // Get node name for conversational display
     const nodeName = nodeInfos[nodeIdHex] ? nodeInfos[nodeIdHex].longName : "Unknown";
-    const shortName = nodeInfos[nodeIdHex] ? nodeInfos[nodeIdHex].shortName : "UNK";
     
-    // Create title with node link if Meshinfo-lite URL is configured
-    let title = shortName;
+    // Create optional Meshinfo-lite link
     let authorUrl = `https://meshview.rouvier.org/packet_list/${packet.from}`;
     
     if (meshinfoLiteUrl) {
       // Ensure URL ends with / for proper concatenation
       const baseUrl = meshinfoLiteUrl.endsWith('/') ? meshinfoLiteUrl : meshinfoLiteUrl + '/';
-      const nodeUrl = `${baseUrl}node_${nodeIdHex}.html`;
-      title = `[${shortName}](${nodeUrl})`;
-      authorUrl = nodeUrl;
+      authorUrl = `${baseUrl}node_${nodeIdHex}.html`;
     }
 
-    // Simplified Discord message format
+    // Conversational Discord message format
     const content = {
-      username: "Mesh Bot",
-      avatar_url:
-        "https://cdn.discordapp.com/app-icons/1240017058046152845/295e77bec5f9a44f7311cf8723e9c332.png",
+      username: nodeName,
+      avatar_url: avatarUrl,
       embeds: [
         {
           color: 6810260,
           timestamp: new Date(packet.rxTime * 1000).toISOString(),
+          description: text,
           author: {
             name: nodeName,
             url: authorUrl,
             icon_url: avatarUrl,
           },
-          title: title,
-          description: text,
-          fields: [
-            {
-              name: "Node ID",
-              value: nodeIdHex,
-              inline: true,
-            },
-          ],
         },
       ],
     };
