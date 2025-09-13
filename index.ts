@@ -356,21 +356,35 @@ const createDiscordMessage = async (packetGroup, text) => {
       avatarUrl = pfpDb[nodeIdHex];
     }
 
-    // Get node name for conversational display
-    const nodeName = nodeInfos[nodeIdHex] ? nodeInfos[nodeIdHex].longName : "Unknown";
-    
+    // Format author name according to available info
+    let longName, shortName;
+    if (nodeInfos[nodeIdHex]) {
+      longName = nodeInfos[nodeIdHex].longName;
+      shortName = nodeInfos[nodeIdHex].shortName;
+    } else if (nodeDB[nodeIdHex]) {
+      longName = nodeDB[nodeIdHex];
+    }
+    let authorName;
+    if (longName) {
+      authorName = shortName ? `${longName} (${shortName})` : longName;
+    } else if (shortName) {
+      authorName = `${shortName} (${nodeIdHex})`;
+    } else if (nodeDB[nodeIdHex]) {
+      authorName = nodeDB[nodeIdHex];
+    } else {
+      authorName = nodeIdHex;
+    }
+
     // Create optional Meshinfo-lite link
     let authorUrl = `https://meshview.rouvier.org/packet_list/${packet.from}`;
-    
     if (meshinfoLiteUrl) {
-      // Ensure URL ends with / for proper concatenation
       const baseUrl = meshinfoLiteUrl.endsWith('/') ? meshinfoLiteUrl : meshinfoLiteUrl + '/';
       authorUrl = `${baseUrl}node_${nodeIdHex}.html`;
     }
 
     // Conversational Discord message format
     const content = {
-      username: nodeName,
+      username: authorName,
       avatar_url: avatarUrl,
       embeds: [
         {
@@ -378,7 +392,7 @@ const createDiscordMessage = async (packetGroup, text) => {
           timestamp: new Date(packet.rxTime * 1000).toISOString(),
           description: text,
           author: {
-            name: nodeName,
+            name: authorName,
             url: authorUrl,
             icon_url: avatarUrl,
           },
